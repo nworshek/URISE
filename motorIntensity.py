@@ -61,7 +61,7 @@ def close_app():
 root = tk.Tk()
 root.title("6 Motor Control")
 root.configure(bg="#2f2f2f")
-root.geometry("1200x430")
+root.geometry("1200x500")
 
 title = tk.Label(
     root,
