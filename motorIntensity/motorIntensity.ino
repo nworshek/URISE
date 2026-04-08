@@ -1,3 +1,5 @@
+// Motor Intensity Arduino Firmware for Arduino IDE
+
 const int IN1 = 3;
 const int IN2 = 5;
 const int IN3 = 6;
