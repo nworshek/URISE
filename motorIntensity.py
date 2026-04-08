@@ -3,7 +3,7 @@ from tkinter import messagebox
 import serial
 import time
 
-ARDUINO_PORT = "COM3"   # change this
+ARDUINO_PORT = "/dev/tty.usbserial-10"   # change this to your Arduino's serial port, e.g., "COM3" on Windows or "/dev/ttyACM0" on Linux
 BAUD_RATE = 9600
 
 try:
