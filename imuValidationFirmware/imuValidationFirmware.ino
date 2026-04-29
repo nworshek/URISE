@@ -15,32 +15,40 @@
     STOP
     TEST:STOP
     TEST:START:M1:255:5000
-    TEST:START:M1,M3,M5:180:5000
+    TEST:START:M1,M3,M4:180:5000
 
   Serial responses back to Python:
     READY
     ACK:TEST_START
     ACK:TEST_STOP
-    STATUS:M1=OFF,M2=ON,M3=OFF,M4=OFF,M5=OFF,M6=OFF
+    STATUS:M1=OFF,M2=ON,M3=OFF,M4=OFF
     EVENT:M3:ON
     EVENT:M3:OFF
     IMU:<millis>,<ax>,<ay>,<az>,<gx>,<gy>,<gz>
 
   Hardware notes:
   - MPU6050 on I2C
-  - 6 motors max
+  - 4 motors max
+  - Original motors 3 and 4 were removed
+  - Original motors 5 and 6 are now renamed as M3 and M4
   - Motors must be driven through proper drivers/transistors
   - Do not power motors directly from Arduino pins
 */
 
 Adafruit_MPU6050 mpu;
 
-const int MOTOR_COUNT = 6;
-const int motorPins[MOTOR_COUNT] = {3, 5, 6, 9, 10, 11};
+const int MOTOR_COUNT = 4;
 
-bool motorSelected[MOTOR_COUNT] = {false, false, false, false, false, false};
-bool motorState[MOTOR_COUNT]    = {false, false, false, false, false, false};
-int  motorIntensity[MOTOR_COUNT] = {0, 0, 0, 0, 0, 0};
+// New motor mapping:
+// New M1 = original M1 = pin 3
+// New M2 = original M2 = pin 5
+// New M3 = original M5 = pin 10
+// New M4 = original M6 = pin 11
+const int motorPins[MOTOR_COUNT] = {3, 5, 10, 11};
+
+bool motorSelected[MOTOR_COUNT] = {false, false, false, false};
+bool motorState[MOTOR_COUNT]    = {false, false, false, false};
+int  motorIntensity[MOTOR_COUNT] = {0, 0, 0, 0};
 
 bool testRunning = false;
 unsigned long testStartMillis = 0;
@@ -68,7 +76,7 @@ void setup() {
   }
 
   delay(500);
-  Serial.println("FIRMWARE_VERSION_2");
+  Serial.println("FIRMWARE_VERSION_4_MOTOR");
   Serial.println("READY");
   sendStatus();
 }
@@ -129,12 +137,12 @@ void processCommand(String cmd) {
 void handleTestStart(String cmd) {
   // Expected examples:
   // TEST:START:M1:255:5000
-  // TEST:START:M1,M3,M5:180:5000
+  // TEST:START:M1,M3,M4:180:5000
 
-  int p1 = cmd.indexOf(':');               // after TEST
-  int p2 = cmd.indexOf(':', p1 + 1);       // after START
-  int p3 = cmd.indexOf(':', p2 + 1);       // after motor list
-  int p4 = cmd.indexOf(':', p3 + 1);       // after intensity
+  int p1 = cmd.indexOf(':');               
+  int p2 = cmd.indexOf(':', p1 + 1);       
+  int p3 = cmd.indexOf(':', p2 + 1);       
+  int p4 = cmd.indexOf(':', p3 + 1);       
 
   if (p1 == -1 || p2 == -1 || p3 == -1 || p4 == -1) {
     Serial.println("ERROR:Bad TEST:START format");
@@ -202,6 +210,7 @@ bool parseMotorSelection(String motorList) {
     }
 
     int motorNumber = token.substring(1).toInt();
+
     if (motorNumber < 1 || motorNumber > MOTOR_COUNT) {
       return false;
     }
@@ -301,7 +310,10 @@ void sendStatus() {
     Serial.print(i + 1);
     Serial.print("=");
     Serial.print(motorState[i] ? "ON" : "OFF");
-    if (i < MOTOR_COUNT - 1) Serial.print(",");
+
+    if (i < MOTOR_COUNT - 1) {
+      Serial.print(",");
+    }
   }
   Serial.println();
 }
