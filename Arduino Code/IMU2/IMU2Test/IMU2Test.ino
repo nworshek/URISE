@@ -1,6 +1,6 @@
 #include <Wire.h>
 #include <math.h>
-#include "SparkFun_BMI270_Arduino_Library.h"
+#include <SparkFun_BMI270_Arduino_Library.h>
 
 // Create BMI270 sensor object
 BMI270 imu;

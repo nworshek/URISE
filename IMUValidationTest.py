@@ -66,13 +66,19 @@ class IMUValidationApp:
         self.baseline_amplitude = 0.0
         self.baseline_ready = False
 
-        # Real-time measurement references
-        self.a0 = None                  # first measured amplitude for the active trial
-        self.t0_pc = None               # Python/computer timestamp at trial start
-        self.t0_imu = None              # first IMU timestamp for the active trial
+        # Test timing references
+        self.t0 = None                  # test start time, set when a test starts
+        self.t1 = None                  # test end time, set when a test ends
+        self.tdelta = 0.0               # elapsed time between t0 and t1
         self.current_sample_count = 0
-        self.last_sample_pc_time = None
-        self.sample_rate_history = []
+
+        # Cycle control references
+        self.cycle_count = 1              # total cycles requested for a trial
+        self.current_cycle = 0            # current cycle number during active trial
+        self.cycle_force_stop = False     # true when user cancels/stops before all cycles finish
+        self.base_intensity = 0           # starting intensity for cycle tests
+        self.intensity_step = 0           # amount added to intensity each cycle
+        self.current_cycle_intensity = 0  # actual PWM intensity used by the active cycle
 
         self.amp_history = []
         self.amp_window_size = 10
@@ -157,24 +163,33 @@ class IMUValidationApp:
         self.intensity_var = tk.StringVar(value="180")
         tk.Entry(frame, textvariable=self.intensity_var, width=12).grid(row=0, column=1, sticky="w", padx=6, pady=3)
 
-        tk.Label(frame, text="Duration (ms)", bg="#202020", fg="white").grid(row=1, column=0, sticky="w", pady=3)
+        tk.Label(frame, text="Duration per Cycle (ms)", bg="#202020", fg="white").grid(row=1, column=0, sticky="w", pady=3)
         self.duration_var = tk.StringVar(value="5000")
         tk.Entry(frame, textvariable=self.duration_var, width=12).grid(row=1, column=1, sticky="w", padx=6, pady=3)
 
-        tk.Label(frame, text="Test Name", bg="#202020", fg="white").grid(row=2, column=0, sticky="w", pady=3)
+        tk.Label(frame, text="Cycles", bg="#202020", fg="white").grid(row=2, column=0, sticky="w", pady=3)
+        self.cycle_count_var = tk.StringVar(value="1")
+        tk.Entry(frame, textvariable=self.cycle_count_var, width=12).grid(row=2, column=1, sticky="w", padx=6, pady=3)
+
+        tk.Label(frame, text="Intensity Change / Cycle", bg="#202020", fg="white").grid(row=3, column=0, sticky="w", pady=3)
+        self.intensity_step_var = tk.StringVar(value="0")
+        tk.Entry(frame, textvariable=self.intensity_step_var, width=12).grid(row=3, column=1, sticky="w", padx=6, pady=3)
+        tk.Label(frame, text="Use + to increase, - to decrease", bg="#202020", fg="#cfcfcf", font=("Arial", 8)).grid(row=3, column=2, sticky="w", pady=3)
+
+        tk.Label(frame, text="Test Name", bg="#202020", fg="white").grid(row=4, column=0, sticky="w", pady=3)
         self.test_name_var = tk.StringVar(value="phantom_validation_run")
-        tk.Entry(frame, textvariable=self.test_name_var, width=24).grid(row=2, column=1, sticky="w", padx=6, pady=3)
+        tk.Entry(frame, textvariable=self.test_name_var, width=24).grid(row=4, column=1, sticky="w", padx=6, pady=3)
 
-        tk.Label(frame, text="Trial Notes", bg="#202020", fg="white").grid(row=3, column=0, sticky="nw", pady=3)
+        tk.Label(frame, text="Trial Notes", bg="#202020", fg="white").grid(row=5, column=0, sticky="nw", pady=3)
         self.notes_text = tk.Text(frame, width=30, height=4, bg="#111111", fg="white", insertbackground="white")
-        self.notes_text.grid(row=3, column=1, columnspan=2, sticky="w", padx=6, pady=3)
+        self.notes_text.grid(row=5, column=1, columnspan=2, sticky="w", padx=6, pady=3)
 
-        tk.Button(frame, text="Start Test", width=12, command=self.start_manual_test).grid(row=4, column=0, pady=(10, 4))
-        tk.Button(frame, text="Stop Test", width=12, command=self.stop_test).grid(row=4, column=1, pady=(10, 4), sticky="w")
-        tk.Button(frame, text="Save Logs", width=12, command=self.save_logs).grid(row=4, column=2, pady=(10, 4))
+        tk.Button(frame, text="Start Test", width=12, command=self.start_manual_test).grid(row=6, column=0, pady=(10, 4))
+        tk.Button(frame, text="Stop Test", width=12, command=self.stop_test).grid(row=6, column=1, pady=(10, 4), sticky="w")
+        tk.Button(frame, text="Save Logs", width=12, command=self.save_logs).grid(row=6, column=2, pady=(10, 4))
 
         self.run_status = tk.Label(frame, text="Idle", bg="#202020", fg="#ffcc00", font=("Arial", 10, "bold"))
-        self.run_status.grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        self.run_status.grid(row=7, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
     def build_checklist_frame(self, parent):
         frame = tk.LabelFrame(parent, text="Pre-Test Checklist", bg="#202020", fg="white", padx=10, pady=10)
@@ -304,12 +319,12 @@ class IMUValidationApp:
         self.update_pretest_display()
 
     def build_realtime_frame(self, parent):
-        frame = tk.LabelFrame(parent, text="Real-Time Calculations", bg="#202020", fg="white", padx=10, pady=10)
+        frame = tk.LabelFrame(parent, text="Real-Time Timing", bg="#202020", fg="white", padx=10, pady=10)
         frame.pack(side="left", fill="both", expand=True, padx=(8, 8))
 
         self.realtime_time_label = tk.Label(
             frame,
-            text="Time: waiting for data",
+            text="Current Time: waiting for data",
             bg="#202020",
             fg="#d0d0d0",
             anchor="w",
@@ -318,9 +333,9 @@ class IMUValidationApp:
         )
         self.realtime_time_label.pack(fill="x", pady=(0, 6))
 
-        self.a0_t0_label = tk.Label(
+        self.timing_label = tk.Label(
             frame,
-            text="t0: not set | a0: not set",
+            text="t0: not set | t1: not set | tdelta: 0.000 s",
             bg="#202020",
             fg="#00d7ff",
             font=("Arial", 11, "bold"),
@@ -328,46 +343,11 @@ class IMUValidationApp:
             justify="left",
             wraplength=430
         )
-        self.a0_t0_label.pack(fill="x", pady=(0, 6))
-
-        self.delta_amp_label = tk.Label(
-            frame,
-            text="ΔAmplitude from a0: 0.000 m/s²",
-            bg="#202020",
-            fg="lime",
-            font=("Arial", 12, "bold"),
-            anchor="w",
-            justify="left",
-            wraplength=430
-        )
-        self.delta_amp_label.pack(fill="x", pady=(0, 6))
-
-        self.percent_change_label = tk.Label(
-            frame,
-            text="Percent change from a0: 0.00%",
-            bg="#202020",
-            fg="#ffcc00",
-            font=("Arial", 12, "bold"),
-            anchor="w",
-            justify="left",
-            wraplength=430
-        )
-        self.percent_change_label.pack(fill="x", pady=(0, 6))
-
-        self.sample_rate_label = tk.Label(
-            frame,
-            text="Estimated sample rate: 0.0 Hz",
-            bg="#202020",
-            fg="#d0d0d0",
-            anchor="w",
-            justify="left",
-            wraplength=430
-        )
-        self.sample_rate_label.pack(fill="x", pady=(0, 6))
+        self.timing_label.pack(fill="x", pady=(0, 6))
 
         self.realtime_summary_label = tk.Label(
             frame,
-            text="Live summary: no active data yet",
+            text="Live summary: timing not active",
             bg="#202020",
             fg="white",
             anchor="w",
@@ -536,17 +516,32 @@ class IMUValidationApp:
             messagebox.showerror("Error", "Duration must be an integer in milliseconds")
             return None
 
+        try:
+            cycle_count = int(self.cycle_count_var.get().strip())
+        except ValueError:
+            messagebox.showerror("Error", "Cycles must be an integer")
+            return None
+
+        try:
+            intensity_step = int(self.intensity_step_var.get().strip())
+        except ValueError:
+            messagebox.showerror("Error", "Intensity Change / Cycle must be an integer. Use positive numbers to increase or negative numbers to decrease.")
+            return None
+
         if not (0 <= intensity <= 255):
             messagebox.showerror("Error", "Intensity must be between 0 and 255")
             return None
         if duration_ms <= 0:
-            messagebox.showerror("Error", "Duration must be greater than 0")
+            messagebox.showerror("Error", "Duration per cycle must be greater than 0")
+            return None
+        if cycle_count <= 0:
+            messagebox.showerror("Error", "Cycles must be 1 or greater")
             return None
         if not self.serial_conn or not self.serial_conn.is_open:
             messagebox.showerror("Error", "Connect to the Arduino first")
             return None
 
-        return motors, intensity, duration_ms
+        return motors, intensity, duration_ms, cycle_count, intensity_step
 
     def new_trial_id(self, prefix="TRIAL"):
         self.trial_counter += 1
@@ -561,53 +556,91 @@ class IMUValidationApp:
         validated = self.validate_test_inputs(require_motor=True)
         if not validated:
             return
-        motors, intensity, duration_ms = validated
-        self.start_trial(motors, intensity, duration_ms, mode="manual", label="Manual Test")
+        motors, intensity, duration_ms, cycle_count, intensity_step = validated
+        self.start_trial(motors, intensity, duration_ms, mode="manual", label="Manual Test", cycle_count=cycle_count, intensity_step=intensity_step)
 
-    def start_trial(self, motors, intensity, duration_ms, mode, label, auto_next_callback=None):
+    def start_trial(self, motors, intensity, duration_ms, mode, label, auto_next_callback=None, cycle_count=None, intensity_step=None):
         if self.is_test_running:
             messagebox.showerror("Error", "A test is already running")
             return False
 
+        if cycle_count is None:
+            try:
+                cycle_count = int(self.cycle_count_var.get().strip())
+            except Exception:
+                cycle_count = 1
+        if cycle_count < 1:
+            cycle_count = 1
+
+        if intensity_step is None:
+            try:
+                intensity_step = int(self.intensity_step_var.get().strip())
+            except Exception:
+                intensity_step = 0
+
         motor_string = ",".join([f"M{i}" for i in motors])
-        command = f"TEST:START:{motor_string}:{intensity}:{duration_ms}"
+        current_cycle_intensity = self.clamp_intensity(intensity)
+        command = f"TEST:START:{motor_string}:{current_cycle_intensity}:{duration_ms}"
 
         self.active_trial_id = self.new_trial_id(label.replace(" ", "_").upper())
         self.current_mode = mode
         self.current_trial_samples = []
         self.amp_history = []
-        self.a0 = None
-        self.t0_pc = None
-        self.t0_imu = None
+        self.t0 = time.time()
+        self.t1 = None
+        self.tdelta = 0.0
         self.current_sample_count = 0
-        self.last_sample_pc_time = None
-        self.sample_rate_history = []
-        self.test_start_time = time.time()
+        self.test_start_time = self.t0
         self.is_test_running = True
+
+        self.cycle_count = cycle_count
+        self.current_cycle = 1
+        self.cycle_force_stop = False
+        self.base_intensity = self.clamp_intensity(intensity)
+        self.intensity_step = intensity_step
+        self.current_cycle_intensity = current_cycle_intensity
+
         self.current_trial_metadata = {
             "trial_id": self.active_trial_id,
             "test_name": self.test_name_var.get().strip(),
             "mode": mode,
             "label": label,
             "selected_motors": motor_string,
-            "intensity": intensity,
+            "base_intensity": self.base_intensity,
+            "intensity": self.current_cycle_intensity,
+            "intensity_step_per_cycle": self.intensity_step,
             "duration_ms": duration_ms,
-            "baseline_amplitude": self.baseline_amplitude,
+            "cycle_count": self.cycle_count,
             "notes": self.get_notes(),
-            "start_time": datetime.now().isoformat(),
-            "a0": "",
-            "t0_pc": "",
-            "t0_imu": "",
+            "t0": datetime.fromtimestamp(self.t0).isoformat(timespec="milliseconds") if self.t0 else "",
+            "t1": "",
+            "tdelta_s": "",
             "auto_next_callback": auto_next_callback,
+            "cycle_command": command,
         }
 
-        self.run_status.config(text=f"Running: {label}", fg="lime")
+        self.run_status.config(text=f"Running: {label} | Cycle {self.current_cycle}/{self.cycle_count} | Intensity {self.current_cycle_intensity}", fg="lime")
         self.trial_label.config(text=f"Active Trial: {self.active_trial_id}")
         self.append_log(f"[TEST] Starting {label}")
         self.append_log(f"[TEST] Trial ID: {self.active_trial_id}")
         self.append_log(f"[TEST] Motors selected before start: {motor_string}")
-        self.append_log(f"[TEST] Intensity: {intensity}")
-        self.append_log(f"[TEST] Duration (ms): {duration_ms}")
+        self.append_log(f"[TEST] Starting intensity: {self.base_intensity}")
+        self.append_log(f"[TEST] Intensity change per cycle: {self.intensity_step}")
+        self.append_log(f"[TEST] Duration per cycle (ms): {duration_ms}")
+        self.append_log(f"[TEST] Cycles: {self.cycle_count}")
+        self.append_log(f"[TEST] Test name: {self.current_trial_metadata.get('test_name', '')}")
+        if self.current_trial_metadata.get("notes", ""):
+            self.append_log("[TEST] Notes captured for this trial")
+        self.append_log(f"[CYCLE] Starting cycle {self.current_cycle}/{self.cycle_count} at intensity {self.current_cycle_intensity}")
+
+        self.timing_label.config(
+            text=(
+                f"t0: {datetime.fromtimestamp(self.t0).strftime('%H:%M:%S.%f')[:-3] if self.t0 else 'not set'} | "
+                f"t1: running | "
+                f"tdelta: {self.tdelta:.3f} s"
+            )
+        )
+        self.realtime_summary_label.config(text=f"Live summary: cycle {self.current_cycle}/{self.cycle_count} running | intensity {self.current_cycle_intensity}")
 
         if not self.send_command(command):
             self.is_test_running = False
@@ -615,7 +648,55 @@ class IMUValidationApp:
             return False
         return True
 
+    def clamp_intensity(self, value):
+        try:
+            value = int(value)
+        except Exception:
+            value = 0
+        return max(0, min(255, value))
+
+    def get_cycle_intensity(self, cycle_number):
+        return self.clamp_intensity(self.base_intensity + ((cycle_number - 1) * self.intensity_step))
+
+    def build_cycle_command(self):
+        motor_string = self.current_trial_metadata.get("selected_motors", "")
+        duration_ms = self.current_trial_metadata.get("duration_ms", "")
+        self.current_cycle_intensity = self.get_cycle_intensity(self.current_cycle)
+        self.current_trial_metadata["intensity"] = self.current_cycle_intensity
+        return f"TEST:START:{motor_string}:{self.current_cycle_intensity}:{duration_ms}"
+
+    def start_next_cycle(self):
+        if not self.is_test_running or not self.current_trial_metadata:
+            return
+
+        command = self.build_cycle_command()
+        label = self.current_trial_metadata.get("label", "Test")
+        if not command:
+            self.finish_current_trial(reason="cycle_command_missing")
+            return
+
+        self.run_status.config(text=f"Running: {label} | Cycle {self.current_cycle}/{self.cycle_count} | Intensity {self.current_cycle_intensity}", fg="lime")
+        self.realtime_summary_label.config(text=f"Live summary: cycle {self.current_cycle}/{self.cycle_count} running | intensity {self.current_cycle_intensity}")
+        self.append_log(f"[CYCLE] Starting cycle {self.current_cycle}/{self.cycle_count} at intensity {self.current_cycle_intensity}")
+
+        if not self.send_command(command):
+            self.finish_current_trial(reason="cycle_start_failed")
+
+    def handle_cycle_stop(self, reason="arduino_stop_ack"):
+        if self.cycle_force_stop:
+            self.finish_current_trial(reason=reason)
+            return
+
+        if self.is_test_running and self.current_cycle < self.cycle_count:
+            self.append_log(f"[CYCLE] Completed cycle {self.current_cycle}/{self.cycle_count}")
+            self.current_cycle += 1
+            after_id = self.root.after(250, self.start_next_cycle)
+            self.pending_after_ids.append(after_id)
+        else:
+            self.finish_current_trial(reason=reason)
+
     def stop_test(self):
+        self.cycle_force_stop = True
         self.send_command("TEST:STOP")
         self.finish_current_trial(reason="stopped_by_user")
         self.run_status.config(text="Stopped", fg="orange")
@@ -633,15 +714,13 @@ class IMUValidationApp:
 
         self.send_command("TEST:STOP")
         self.baseline_samples = []
-        self.a0 = None
-        self.t0_pc = None
-        self.t0_imu = None
+        self.t0 = time.time()
+        self.t1 = None
+        self.tdelta = 0.0
         self.current_sample_count = 0
-        self.last_sample_pc_time = None
-        self.sample_rate_history = []
         self.current_mode = "baseline"
         self.active_trial_id = self.new_trial_id("BASELINE")
-        self.test_start_time = time.time()
+        self.test_start_time = self.t0
         self.is_test_running = True
         self.run_status.config(text="Recording baseline", fg="#00d7ff")
         self.trial_label.config(text=f"Active Trial: {self.active_trial_id}")
@@ -744,7 +823,9 @@ class IMUValidationApp:
             item["duration_ms"],
             mode=self.current_mode,
             label=item["label"],
-            auto_next_callback=self.schedule_next_sweep_trial
+            auto_next_callback=self.schedule_next_sweep_trial,
+            cycle_count=int(self.cycle_count_var.get().strip()) if self.cycle_count_var.get().strip().isdigit() else 1,
+            intensity_step=int(self.intensity_step_var.get().strip()) if self.intensity_step_var.get().strip().lstrip("+-").isdigit() else 0
         )
 
     def schedule_next_sweep_trial(self):
@@ -754,6 +835,7 @@ class IMUValidationApp:
 
     def cancel_automation(self):
         self.sweep_running = False
+        self.cycle_force_stop = True
         for after_id in self.pending_after_ids:
             try:
                 self.root.after_cancel(after_id)
@@ -785,7 +867,7 @@ class IMUValidationApp:
         elif line.startswith("EVENT:"):
             self.parse_event_line(line)
         elif line.startswith("ACK:TEST_STOP"):
-            self.finish_current_trial(reason="arduino_stop_ack")
+            self.handle_cycle_stop(reason="arduino_stop_ack")
         elif line.startswith("ACK:TEST_START"):
             self.run_status.config(text=f"Running: {self.current_trial_metadata.get('label', 'Test')}", fg="lime")
         elif line.startswith("READY") or line.startswith("FIRMWARE"):
@@ -846,6 +928,7 @@ class IMUValidationApp:
         self.amp_history.append(amplitude)
         if len(self.amp_history) > self.amp_window_size:
             self.amp_history.pop(0)
+
         smoothed_amplitude = sum(self.amp_history) / len(self.amp_history)
         corrected_amplitude = max(0.0, smoothed_amplitude - self.baseline_amplitude)
 
@@ -853,36 +936,9 @@ class IMUValidationApp:
         now_iso = datetime.now().isoformat(timespec="milliseconds")
         self.current_sample_count += 1
 
-        if self.t0_pc is None:
-            self.t0_pc = now_pc
-        if self.t0_imu is None:
-            self.t0_imu = timestamp_raw
-        if self.a0 is None:
-            self.a0 = corrected_amplitude
-            if self.current_trial_metadata:
-                self.current_trial_metadata["a0"] = self.a0
-                self.current_trial_metadata["t0_pc"] = datetime.fromtimestamp(self.t0_pc).isoformat(timespec="milliseconds")
-                self.current_trial_metadata["t0_imu"] = self.t0_imu
+        if self.t0 is not None and self.t1 is None:
+            self.tdelta = now_pc - self.t0
 
-        elapsed_from_t0 = now_pc - self.t0_pc if self.t0_pc else 0.0
-        delta_from_a0 = corrected_amplitude - self.a0 if self.a0 is not None else 0.0
-        percent_change_from_a0 = (delta_from_a0 / self.a0 * 100.0) if self.a0 and abs(self.a0) > 1e-9 else 0.0
-
-        instant_sample_rate = 0.0
-        if self.last_sample_pc_time is not None:
-            dt = now_pc - self.last_sample_pc_time
-            if dt > 0:
-                instant_sample_rate = 1.0 / dt
-                self.sample_rate_history.append(instant_sample_rate)
-                if len(self.sample_rate_history) > 20:
-                    self.sample_rate_history.pop(0)
-        self.last_sample_pc_time = now_pc
-        average_sample_rate = sum(self.sample_rate_history) / len(self.sample_rate_history) if self.sample_rate_history else 0.0
-
-        if self.current_mode == "baseline" and self.is_test_running:
-            self.baseline_samples.append(amplitude)
-
-        elapsed = round(time.time() - self.test_start_time, 3) if self.test_start_time else 0.0
         selected = self.selected_motors()
         selected_text = ",".join([f"M{i}" for i in selected]) if selected else "None"
 
@@ -893,42 +949,33 @@ class IMUValidationApp:
             text=f"Last IMU sample: ax={ax:.2f}, ay={ay:.2f}, az={az:.2f}, gx={gx:.2f}, gy={gy:.2f}, gz={gz:.2f}"
         )
 
-        self.realtime_time_label.config(
-            text=f"Time: now={now_iso} | elapsed from t0={elapsed_from_t0:.3f}s | IMU timestamp={timestamp_raw}"
+        self.realtime_time_label.config(text=f"Current Time: {now_iso}")
+        self.timing_label.config(
+            text=(
+                f"t0: {datetime.fromtimestamp(self.t0).strftime('%H:%M:%S.%f')[:-3] if self.t0 else 'not set'} | "
+                f"t1: {'running' if self.t1 is None else datetime.fromtimestamp(self.t1).strftime('%H:%M:%S.%f')[:-3]} | "
+                f"tdelta: {self.tdelta:.3f} s"
+            )
         )
-        self.a0_t0_label.config(
-            text=f"t0 PC={datetime.fromtimestamp(self.t0_pc).isoformat(timespec='milliseconds') if self.t0_pc else 'not set'} | t0 IMU={self.t0_imu} | a0={self.a0:.4f} m/s²"
-        )
-        self.delta_amp_label.config(text=f"ΔAmplitude from a0: {delta_from_a0:.4f} m/s²")
-        self.percent_change_label.config(text=f"Percent change from a0: {percent_change_from_a0:.2f}%")
-        self.sample_rate_label.config(text=f"Estimated sample rate: {average_sample_rate:.1f} Hz")
         self.realtime_summary_label.config(
             text=(
                 f"Live summary: sample #{self.current_sample_count} | "
-                f"current corrected amp={corrected_amplitude:.4f} m/s² | "
-                f"smoothed={smoothed_amplitude:.4f} m/s²"
+                f"cycle={self.current_cycle}/{self.cycle_count} | "
+                f"intensity={self.current_cycle_intensity} | "
+                f"tdelta={self.tdelta:.3f} s"
             )
         )
 
         row = {
             "trial_id": self.active_trial_id or "None",
-            "pc_timestamp": datetime.now().isoformat(),
-            "elapsed_s": elapsed,
-            "imu_timestamp": timestamp_raw,
             "mode": self.current_mode,
-            "test_name": self.test_name_var.get().strip(),
+            "test_name": self.current_trial_metadata.get("test_name", self.test_name_var.get().strip()),
             "selected_motors": selected_text,
-            "intensity": self.current_trial_metadata.get("intensity", ""),
-            "duration_ms": self.current_trial_metadata.get("duration_ms", ""),
-            "baseline_amplitude": self.baseline_amplitude,
-            "a0": self.a0,
-            "t0_pc": datetime.fromtimestamp(self.t0_pc).isoformat(timespec="milliseconds") if self.t0_pc else "",
-            "t0_imu": self.t0_imu,
-            "elapsed_from_t0_s": elapsed_from_t0,
-            "delta_from_a0": delta_from_a0,
-            "percent_change_from_a0": percent_change_from_a0,
-            "estimated_sample_rate_hz": average_sample_rate,
-            "sample_number": self.current_sample_count,
+            "base_intensity": self.current_trial_metadata.get("base_intensity", ""),
+            "intensity_step_per_cycle": self.current_trial_metadata.get("intensity_step_per_cycle", ""),
+            "intensity": self.current_cycle_intensity,
+            "cycle_count": self.cycle_count,
+            "current_cycle": self.current_cycle,
             "ax": ax,
             "ay": ay,
             "az": az,
@@ -937,14 +984,14 @@ class IMUValidationApp:
             "gz": gz,
             "raw_accel_magnitude": raw_magnitude,
             "amplitude": amplitude,
-            "smoothed_amplitude": smoothed_amplitude,
-            "baseline_corrected_amplitude": corrected_amplitude,
-            "notes": self.get_notes(),
         }
 
         self.log_rows.append(row)
         if self.is_test_running and self.current_mode != "baseline":
             self.current_trial_samples.append(row)
+
+        if self.current_mode == "baseline" and self.is_test_running:
+            self.baseline_samples.append(amplitude)
 
         if self.current_mode != "baseline":
             self.check_vars["IMU detected / no MPU error"].set(True)
@@ -952,61 +999,127 @@ class IMUValidationApp:
 
     # ---------------- Trial Summary ----------------
 
+
+    def estimate_vibration_frequency(self, samples):
+        """
+        Estimate vibration frequency from the amplitude signal for the completed trial.
+
+        Method:
+        - Uses the saved amplitude values from the trial.
+        - Finds local amplitude peaks above an adaptive threshold.
+        - Converts peak count into Hz using the total trial duration.
+
+        Note:
+        This is an estimated vibration frequency, not the IMU sampling frequency.
+        """
+        if not samples or len(samples) < 3 or not self.tdelta or self.tdelta <= 0:
+            return 0.0, 0, "insufficient_data"
+
+        try:
+            amplitudes = [float(row.get("amplitude", 0.0)) for row in samples]
+        except Exception:
+            return 0.0, 0, "invalid_amplitude_data"
+
+        if len(amplitudes) < 3:
+            return 0.0, 0, "insufficient_data"
+
+        mean_amp = statistics.mean(amplitudes)
+        std_amp = statistics.stdev(amplitudes) if len(amplitudes) > 1 else 0.0
+
+        # Adaptive threshold: only count peaks that rise above normal signal variation.
+        threshold = mean_amp + (0.5 * std_amp)
+
+        peak_count = 0
+        last_peak_index = -999999
+
+        # Basic spacing guard to avoid counting tiny noise wiggles as separate peaks.
+        # This assumes the IMU sample rate is relatively stable.
+        min_samples_between_peaks = 2
+
+        for i in range(1, len(amplitudes) - 1):
+            is_local_peak = amplitudes[i] > amplitudes[i - 1] and amplitudes[i] >= amplitudes[i + 1]
+            is_above_threshold = amplitudes[i] > threshold
+            is_spaced = (i - last_peak_index) >= min_samples_between_peaks
+
+            if is_local_peak and is_above_threshold and is_spaced:
+                peak_count += 1
+                last_peak_index = i
+
+        estimated_frequency_hz = peak_count / self.tdelta if self.tdelta > 0 else 0.0
+        return estimated_frequency_hz, peak_count, "amplitude_peak_count_over_tdelta"
+
     def finish_current_trial(self, reason="completed"):
         if not self.is_test_running and self.current_mode not in ["manual", "verify", "sweep"]:
             return
+
+        self.t1 = time.time()
+        if self.t0 is not None:
+            self.tdelta = self.t1 - self.t0
 
         metadata = self.current_trial_metadata.copy()
         samples = self.current_trial_samples.copy()
         callback = metadata.get("auto_next_callback")
 
-        if samples:
-            amplitudes = [float(row["baseline_corrected_amplitude"]) for row in samples]
-            raw_amps = [float(row["amplitude"]) for row in samples]
-            times = [float(row["elapsed_s"]) for row in samples]
+        trial_date = datetime.fromtimestamp(self.t0).strftime("%Y-%m-%d") if self.t0 else ""
+        t0_text = datetime.fromtimestamp(self.t0).strftime("%H:%M:%S.%f")[:-3] if self.t0 else ""
+        t1_text = datetime.fromtimestamp(self.t1).strftime("%H:%M:%S.%f")[:-3] if self.t1 else ""
 
-            peak_amp = max(amplitudes)
-            avg_amp = statistics.mean(amplitudes)
-            std_amp = statistics.stdev(amplitudes) if len(amplitudes) > 1 else 0.0
-            raw_avg_amp = statistics.mean(raw_amps)
-            peak_index = amplitudes.index(peak_amp)
-            time_to_peak = times[peak_index] if peak_index < len(times) else 0.0
-        else:
-            peak_amp = avg_amp = std_amp = raw_avg_amp = time_to_peak = 0.0
+        estimated_frequency_hz, frequency_peak_count, frequency_method = self.estimate_vibration_frequency(samples)
+
+        # Capture the latest text box values at the moment the trial finishes.
+        # This fixes cases where the test name or notes were edited after pressing Start.
+        final_test_name = self.test_name_var.get().strip() or metadata.get("test_name", "phantom_validation_run")
+        final_notes = self.get_notes() or metadata.get("notes", "")
 
         if metadata:
+            # Keep metadata updated so both the metadata section and summary CSV match.
+            metadata["test_name"] = final_test_name
+            metadata["notes"] = final_notes
+
             summary = {
                 "trial_id": metadata.get("trial_id", self.active_trial_id),
-                "test_name": metadata.get("test_name", ""),
+                "test_name": final_test_name,
                 "mode": metadata.get("mode", self.current_mode),
                 "label": metadata.get("label", ""),
                 "selected_motors": metadata.get("selected_motors", ""),
-                "intensity": metadata.get("intensity", ""),
-                "duration_ms": metadata.get("duration_ms", ""),
-                "baseline_amplitude": metadata.get("baseline_amplitude", self.baseline_amplitude),
-                "a0": metadata.get("a0", ""),
-                "t0_pc": metadata.get("t0_pc", ""),
-                "t0_imu": metadata.get("t0_imu", ""),
+                "base_intensity": metadata.get("base_intensity", ""),
+                "intensity_step_per_cycle": metadata.get("intensity_step_per_cycle", ""),
+                "final_cycle_intensity": self.current_cycle_intensity,
+                "duration_per_cycle_ms": metadata.get("duration_ms", ""),
+                "cycle_count": metadata.get("cycle_count", self.cycle_count),
+                "completed_cycles": self.current_cycle,
+                "date": trial_date,
+                "t0": t0_text,
+                "t1": t1_text,
+                "tdelta_s": self.tdelta,
                 "sample_count": len(samples),
-                "peak_corrected_amplitude": peak_amp,
-                "average_corrected_amplitude": avg_amp,
-                "std_corrected_amplitude": std_amp,
-                "raw_average_amplitude": raw_avg_amp,
-                "time_to_peak_s": time_to_peak,
-                "start_time": metadata.get("start_time", ""),
-                "end_time": datetime.now().isoformat(),
+                "estimated_frequency_hz": estimated_frequency_hz,
+                "frequency_peak_count": frequency_peak_count,
+                "frequency_method": frequency_method,
                 "completion_reason": reason,
-                "notes": metadata.get("notes", ""),
+                "notes": final_notes,
             }
             self.trial_summaries.append(summary)
             self.summary_label.config(
                 text=(
                     f"Last Trial Summary:\n"
-                    f"{summary['label']} | Peak={peak_amp:.3f} m/s² | Avg={avg_amp:.3f} m/s² | "
-                    f"SD={std_amp:.3f} | Time-to-peak={time_to_peak:.3f}s"
+                    f"{summary['label']} | cycles={summary['completed_cycles']}/{summary['cycle_count']} | "
+                    f"t0={t0_text} | t1={t1_text} | tdelta={self.tdelta:.3f}s | freq={estimated_frequency_hz:.3f} Hz"
                 )
             )
-            self.append_log(f"[SUMMARY] {summary['label']} | Peak={peak_amp:.3f}, Avg={avg_amp:.3f}, SD={std_amp:.3f}, TTP={time_to_peak:.3f}s")
+            self.append_log(
+                f"[SUMMARY] {summary['label']} | cycles={summary['completed_cycles']}/{summary['cycle_count']}, "
+                f"t0={t0_text}, t1={t1_text}, tdelta={self.tdelta:.3f}s, estimated_frequency={estimated_frequency_hz:.3f}Hz"
+            )
+
+        self.timing_label.config(
+            text=(
+                f"t0: {t0_text if t0_text else 'not set'} | "
+                f"t1: {t1_text if t1_text else 'not set'} | "
+                f"tdelta: {self.tdelta:.3f} s"
+            )
+        )
+        self.realtime_summary_label.config(text="Live summary: test complete")
 
         self.is_test_running = False
         self.current_trial_samples = []
@@ -1043,9 +1156,41 @@ class IMUValidationApp:
         try:
             if self.log_rows:
                 with open(raw_path, "w", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=list(self.log_rows[0].keys()))
-                    writer.writeheader()
-                    writer.writerows(self.log_rows)
+                    metadata_fields = [
+                        "trial_id",
+                        "test_name",
+                        "mode",
+                        "label",
+                        "selected_motors",
+                        "base_intensity",
+                        "intensity_step_per_cycle",
+                        "duration_per_cycle_ms",
+                        "cycle_count",
+                        "completed_cycles",
+                        "date",
+                        "t0",
+                        "t1",
+                        "tdelta_s",
+                        "sample_count",
+                        "estimated_frequency_hz",
+                        "frequency_peak_count",
+                        "frequency_method",
+                        "completion_reason",
+                        "notes",
+                    ]
+
+                    f.write("TRIAL METADATA AND NOTES\n")
+                    if self.trial_summaries:
+                        metadata_writer = csv.DictWriter(f, fieldnames=metadata_fields, extrasaction="ignore")
+                        metadata_writer.writeheader()
+                        metadata_writer.writerows(self.trial_summaries)
+                    else:
+                        f.write("No completed trial metadata available yet.\n")
+
+                    f.write("\nRAW IMU DATA\n")
+                    raw_writer = csv.DictWriter(f, fieldnames=list(self.log_rows[0].keys()))
+                    raw_writer.writeheader()
+                    raw_writer.writerows(self.log_rows)
 
             if self.trial_summaries:
                 with open(summary_path, "w", newline="") as f:

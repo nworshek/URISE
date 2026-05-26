@@ -54,7 +54,7 @@ bool testRunning = false;
 unsigned long testStartMillis = 0;
 unsigned long testDurationMs = 0;
 unsigned long lastImuSampleMillis = 0;
-const unsigned long imuSampleIntervalMs = 20;   // 50 Hz
+const unsigned long imuSampleIntervalMs = 250; //sample_count 
 
 String inputBuffer = "";
 
