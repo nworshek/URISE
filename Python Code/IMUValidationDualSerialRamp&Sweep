@@ -84,6 +84,23 @@ class DualSerialIMUValidationApp:
         self.intensity_step = 0
         self.current_cycle_intensity = 0
 
+        # Within-cycle ramp state
+        self.ramp_mode = "None"
+        self.ramp_end_intensity = 0
+        self.ramp_update_ms = 250
+        self.ramp_active = False
+        self.ramp_segments = []
+        self.ramp_segment_index = 0
+        self.current_ramp_segment = 0
+        self.current_segment_motors = []
+        self.current_motor_intensities = {i: 0 for i in range(1, self.motor_count + 1)}
+
+        # Within-cycle motor sweep state
+        self.motor_sweep_mode = "None"
+        self.motor_sweep_step_ms = 500
+        self.current_segment_motors = []
+        self.current_motor_intensities = {i: 0 for i in range(1, self.motor_count + 1)}
+
         # Data storage
         self.log_rows = []
         self.trial_summaries = []
@@ -215,20 +232,54 @@ class DualSerialIMUValidationApp:
         self.intensity_step_var = tk.StringVar(value="0")
         tk.Entry(frame, textvariable=self.intensity_step_var, width=12).grid(row=3, column=1, sticky="w", padx=6, pady=3)
 
-        tk.Label(frame, text="Test Name", bg="#202020", fg="white").grid(row=4, column=0, sticky="w", pady=3)
+        tk.Label(frame, text="Ramp Within Cycle", bg="#202020", fg="white").grid(row=4, column=0, sticky="w", pady=3)
+        self.ramp_mode_var = tk.StringVar(value="None")
+        self.ramp_mode_combo = ttk.Combobox(
+            frame,
+            textvariable=self.ramp_mode_var,
+            state="readonly",
+            width=14,
+            values=["None", "Ramp Up", "Ramp Down", "Custom"]
+        )
+        self.ramp_mode_combo.grid(row=4, column=1, sticky="w", padx=6, pady=3)
+
+        tk.Label(frame, text="Ramp End Intensity", bg="#202020", fg="white").grid(row=5, column=0, sticky="w", pady=3)
+        self.ramp_end_intensity_var = tk.StringVar(value="255")
+        tk.Entry(frame, textvariable=self.ramp_end_intensity_var, width=12).grid(row=5, column=1, sticky="w", padx=6, pady=3)
+
+        tk.Label(frame, text="Ramp Step Time (ms)", bg="#202020", fg="white").grid(row=6, column=0, sticky="w", pady=3)
+        self.ramp_update_ms_var = tk.StringVar(value="250")
+        tk.Entry(frame, textvariable=self.ramp_update_ms_var, width=12).grid(row=6, column=1, sticky="w", padx=6, pady=3)
+
+        tk.Label(frame, text="Motor Sweep Within Cycle", bg="#202020", fg="white").grid(row=7, column=0, sticky="w", pady=3)
+        self.motor_sweep_mode_var = tk.StringVar(value="None")
+        self.motor_sweep_mode_combo = ttk.Combobox(
+            frame,
+            textvariable=self.motor_sweep_mode_var,
+            state="readonly",
+            width=18,
+            values=["None", "Sequential Selected", "All Single Motors", "Pairs Selected", "All Then Singles"]
+        )
+        self.motor_sweep_mode_combo.grid(row=7, column=1, sticky="w", padx=6, pady=3)
+
+        tk.Label(frame, text="Motor Sweep Step (ms)", bg="#202020", fg="white").grid(row=8, column=0, sticky="w", pady=3)
+        self.motor_sweep_step_ms_var = tk.StringVar(value="500")
+        tk.Entry(frame, textvariable=self.motor_sweep_step_ms_var, width=12).grid(row=8, column=1, sticky="w", padx=6, pady=3)
+
+        tk.Label(frame, text="Test Name", bg="#202020", fg="white").grid(row=9, column=0, sticky="w", pady=3)
         self.test_name_var = tk.StringVar(value="phantom_validation_run")
-        tk.Entry(frame, textvariable=self.test_name_var, width=24).grid(row=4, column=1, sticky="w", padx=6, pady=3)
+        tk.Entry(frame, textvariable=self.test_name_var, width=24).grid(row=9, column=1, sticky="w", padx=6, pady=3)
 
-        tk.Label(frame, text="Trial Notes", bg="#202020", fg="white").grid(row=5, column=0, sticky="nw", pady=3)
+        tk.Label(frame, text="Trial Notes", bg="#202020", fg="white").grid(row=10, column=0, sticky="nw", pady=3)
         self.notes_text = tk.Text(frame, width=30, height=4, bg="#111111", fg="white", insertbackground="white")
-        self.notes_text.grid(row=5, column=1, columnspan=2, sticky="w", padx=6, pady=3)
+        self.notes_text.grid(row=10, column=1, columnspan=2, sticky="w", padx=6, pady=3)
 
-        tk.Button(frame, text="Start Test", width=12, command=self.start_manual_test).grid(row=6, column=0, pady=(10, 4))
-        tk.Button(frame, text="Stop Test", width=12, command=self.stop_test).grid(row=6, column=1, pady=(10, 4), sticky="w")
-        tk.Button(frame, text="Save Logs", width=12, command=self.save_logs).grid(row=6, column=2, pady=(10, 4))
+        tk.Button(frame, text="Start Test", width=12, command=self.start_manual_test).grid(row=11, column=0, pady=(10, 4))
+        tk.Button(frame, text="Stop Test", width=12, command=self.stop_test).grid(row=11, column=1, pady=(10, 4), sticky="w")
+        tk.Button(frame, text="Save Logs", width=12, command=self.save_logs).grid(row=11, column=2, pady=(10, 4))
 
         self.run_status = tk.Label(frame, text="Idle", bg="#202020", fg="#ffcc00", font=("Arial", 10, "bold"))
-        self.run_status.grid(row=7, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        self.run_status.grid(row=12, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
     def build_motor_selection_frame(self, parent):
         frame = tk.LabelFrame(parent, text="Motor Selection / Pre-Test Arm State", bg="#202020", fg="white", padx=10, pady=10)
@@ -633,18 +684,33 @@ class DualSerialIMUValidationApp:
             duration_ms = int(self.duration_var.get().strip())
             cycle_count = int(self.cycle_count_var.get().strip())
             intensity_step = int(self.intensity_step_var.get().strip())
+            ramp_end_intensity = int(self.ramp_end_intensity_var.get().strip())
+            ramp_update_ms = int(self.ramp_update_ms_var.get().strip())
+            motor_sweep_step_ms = int(self.motor_sweep_step_ms_var.get().strip())
         except ValueError:
-            messagebox.showerror("Error", "Intensity, duration, cycles, and intensity step must be integers")
+            messagebox.showerror("Error", "Intensity, duration, cycles, intensity step, ramp end intensity, ramp step time, and motor sweep step time must be integers")
             return None
+
+        ramp_mode = self.ramp_mode_var.get().strip() or "None"
+        motor_sweep_mode = self.motor_sweep_mode_var.get().strip() or "None"
 
         if not (0 <= intensity <= 255):
             messagebox.showerror("Error", "Intensity must be between 0 and 255")
+            return None
+        if not (0 <= ramp_end_intensity <= 255):
+            messagebox.showerror("Error", "Ramp end intensity must be between 0 and 255")
             return None
         if duration_ms <= 0:
             messagebox.showerror("Error", "Duration per cycle must be greater than 0")
             return None
         if cycle_count <= 0:
             messagebox.showerror("Error", "Cycles must be 1 or greater")
+            return None
+        if ramp_update_ms <= 0:
+            messagebox.showerror("Error", "Ramp step time must be greater than 0 ms")
+            return None
+        if motor_sweep_step_ms <= 0:
+            messagebox.showerror("Error", "Motor sweep step time must be greater than 0 ms")
             return None
         if not self.motor_serial or not self.motor_serial.is_open:
             messagebox.showerror("Error", "Connect to the motor controller first")
@@ -653,7 +719,7 @@ class DualSerialIMUValidationApp:
             messagebox.showerror("Error", "Connect to the IMU sensor controller first")
             return None
 
-        return motors, intensity, duration_ms, cycle_count, intensity_step
+        return motors, intensity, duration_ms, cycle_count, intensity_step, ramp_mode, ramp_end_intensity, ramp_update_ms, motor_sweep_mode, motor_sweep_step_ms
 
     def new_trial_id(self, prefix="TRIAL"):
         self.trial_counter += 1
@@ -678,7 +744,7 @@ class DualSerialIMUValidationApp:
         validated = self.validate_test_inputs(require_motor=True)
         if not validated:
             return
-        motors, intensity, duration_ms, cycle_count, intensity_step = validated
+        motors, intensity, duration_ms, cycle_count, intensity_step, ramp_mode, ramp_end_intensity, ramp_update_ms, motor_sweep_mode, motor_sweep_step_ms = validated
         self.start_trial(
             motors=motors,
             intensity=intensity,
@@ -686,10 +752,15 @@ class DualSerialIMUValidationApp:
             mode="manual",
             label="Manual Test",
             cycle_count=cycle_count,
-            intensity_step=intensity_step
+            intensity_step=intensity_step,
+            ramp_mode=ramp_mode,
+            ramp_end_intensity=ramp_end_intensity,
+            ramp_update_ms=ramp_update_ms,
+            motor_sweep_mode=motor_sweep_mode,
+            motor_sweep_step_ms=motor_sweep_step_ms
         )
 
-    def start_trial(self, motors, intensity, duration_ms, mode, label, auto_next_callback=None, cycle_count=None, intensity_step=None):
+    def start_trial(self, motors, intensity, duration_ms, mode, label, auto_next_callback=None, cycle_count=None, intensity_step=None, ramp_mode="None", ramp_end_intensity=None, ramp_update_ms=None, motor_sweep_mode="None", motor_sweep_step_ms=500):
         if self.is_test_running:
             messagebox.showerror("Error", "A test is already running")
             return False
@@ -698,6 +769,12 @@ class DualSerialIMUValidationApp:
             cycle_count = 1
         if intensity_step is None:
             intensity_step = 0
+        if ramp_end_intensity is None:
+            ramp_end_intensity = intensity
+        if ramp_update_ms is None:
+            ramp_update_ms = 250
+        if motor_sweep_step_ms is None:
+            motor_sweep_step_ms = 500
 
         motor_string = ",".join([f"M{i}" for i in motors])
 
@@ -719,6 +796,19 @@ class DualSerialIMUValidationApp:
         self.base_intensity = self.clamp_intensity(intensity)
         self.intensity_step = int(intensity_step)
         self.current_cycle_intensity = self.get_cycle_intensity(self.current_cycle)
+        self.ramp_mode = ramp_mode or "None"
+        self.ramp_end_intensity = self.clamp_intensity(ramp_end_intensity)
+        self.ramp_update_ms = max(1, int(ramp_update_ms))
+        self.ramp_active = False
+        self.ramp_segments = []
+        self.ramp_segment_index = 0
+        self.current_ramp_segment = 0
+        self.current_segment_motors = []
+        self.current_motor_intensities = {i: 0 for i in range(1, self.motor_count + 1)}
+        self.motor_sweep_mode = motor_sweep_mode or "None"
+        self.motor_sweep_step_ms = max(1, int(motor_sweep_step_ms))
+        self.current_segment_motors = []
+        self.current_motor_intensities = {i: 0 for i in range(1, self.motor_count + 1)}
 
         self.current_trial_metadata = {
             "trial_id": self.active_trial_id,
@@ -726,10 +816,17 @@ class DualSerialIMUValidationApp:
             "mode": mode,
             "label": label,
             "selected_motors": motor_string,
+            "selected_motor_numbers": list(motors),
             "base_intensity": self.base_intensity,
             "intensity_step_per_cycle": self.intensity_step,
             "duration_ms": duration_ms,
             "cycle_count": self.cycle_count,
+            "ramp_mode": self.ramp_mode,
+            "ramp_start_intensity": self.base_intensity,
+            "ramp_end_intensity": self.ramp_end_intensity,
+            "ramp_update_ms": self.ramp_update_ms,
+            "motor_sweep_mode": self.motor_sweep_mode,
+            "motor_sweep_step_ms": self.motor_sweep_step_ms,
             "notes": self.get_notes(),
             "motor_port": self.motor_port_combo.get().strip(),
             "imu_port": self.imu_port_combo.get().strip(),
@@ -752,15 +849,128 @@ class DualSerialIMUValidationApp:
         self.update_timing_labels()
         return self.start_next_cycle(send_first=True)
 
+    def build_motor_groups_for_cycle(self, selected_motors):
+        """Return the motor group sequence used inside each cycle."""
+        selected = list(selected_motors) if selected_motors else []
+        mode = (self.motor_sweep_mode or "None").lower()
+
+        if not selected:
+            return []
+        if mode == "none":
+            return [selected]
+        if mode == "sequential selected":
+            return [[m] for m in selected]
+        if mode == "all single motors":
+            return [[m] for m in range(1, self.motor_count + 1)]
+        if mode == "pairs selected":
+            if len(selected) < 2:
+                return [[m] for m in selected]
+            return [[selected[i], selected[i + 1]] for i in range(len(selected) - 1)]
+        if mode == "all then singles":
+            return [selected] + [[m] for m in selected]
+        return [selected]
+
+    def build_ramp_intensities(self, start_intensity, end_intensity, segment_count):
+        """Return intensity values across a set of within-cycle segments."""
+        ramp_mode = (self.ramp_mode or "None").lower()
+        start_intensity = self.clamp_intensity(start_intensity)
+        end_intensity = self.clamp_intensity(end_intensity)
+        segment_count = max(1, int(segment_count))
+
+        if ramp_mode == "none" or segment_count == 1:
+            return [start_intensity] * segment_count
+
+        if ramp_mode == "ramp up":
+            final_intensity = max(start_intensity, end_intensity)
+        elif ramp_mode == "ramp down":
+            final_intensity = min(start_intensity, end_intensity)
+        else:
+            final_intensity = end_intensity
+
+        values = []
+        for i in range(segment_count):
+            fraction = i / (segment_count - 1) if segment_count > 1 else 0
+            values.append(self.clamp_intensity(round(start_intensity + ((final_intensity - start_intensity) * fraction))))
+        return values
+
+    def distribute_duration(self, total_duration_ms, segment_count):
+        total_duration_ms = max(1, int(total_duration_ms))
+        segment_count = max(1, int(segment_count))
+        base = total_duration_ms // segment_count
+        remainder = total_duration_ms % segment_count
+        return [max(1, base + (1 if i < remainder else 0)) for i in range(segment_count)]
+
+    def build_cycle_segments(self, selected_motors, start_intensity, end_intensity, duration_ms):
+        """
+        Create the command segments for one cycle.
+
+        Each segment contains:
+        - motors: active motor list for that segment
+        - intensity: command intensity for the active motors
+        - duration_ms: segment duration
+
+        This supports two styles at the same time:
+        1. Ramp within cycle: intensity changes across segments.
+        2. Motor sweep within cycle: active motor/group changes across segments.
+        """
+        motor_groups = self.build_motor_groups_for_cycle(selected_motors)
+        if not motor_groups:
+            return []
+
+        ramp_mode = (self.ramp_mode or "None").lower()
+        motor_sweep_mode = (self.motor_sweep_mode or "None").lower()
+
+        if ramp_mode == "none" and motor_sweep_mode == "none":
+            segment_count = 1
+        elif motor_sweep_mode != "none" and ramp_mode == "none":
+            segment_count = len(motor_groups)
+        elif motor_sweep_mode == "none" and ramp_mode != "none":
+            segment_count = max(2, math.ceil(int(duration_ms) / max(1, int(self.ramp_update_ms))))
+        else:
+            # Combined motor sweep + ramp: one intensity point per motor/group step.
+            segment_count = max(2, len(motor_groups))
+
+        durations = self.distribute_duration(duration_ms, segment_count)
+        intensities = self.build_ramp_intensities(start_intensity, end_intensity, segment_count)
+
+        segments = []
+        for i in range(segment_count):
+            motors = motor_groups[i % len(motor_groups)]
+            intensity = intensities[i]
+            segments.append({
+                "motors": motors,
+                "motor_string": ",".join([f"M{m}" for m in motors]),
+                "intensity": self.clamp_intensity(intensity),
+                "duration_ms": durations[i],
+            })
+        return segments
+
+    def set_current_motor_intensities(self, active_motors, intensity):
+        """Track per-motor intensity for CSV output."""
+        active = set(active_motors or [])
+        intensity = self.clamp_intensity(intensity)
+        self.current_segment_motors = sorted(active)
+        self.current_motor_intensities = {
+            i: (intensity if i in active else 0)
+            for i in range(1, self.motor_count + 1)
+        }
+
+    def get_motor_intensity_fields(self):
+        return {f"m{i}_intensity": self.current_motor_intensities.get(i, 0) for i in range(1, self.motor_count + 1)}
+
     def start_next_cycle(self, send_first=False):
         if not self.is_test_running or not self.current_trial_metadata:
             return False
 
-        motor_string = self.current_trial_metadata.get("selected_motors", "")
         duration_ms = self.current_trial_metadata.get("duration_ms", "")
+        selected_motors = self.current_trial_metadata.get("selected_motor_numbers", [])
         self.current_cycle_intensity = self.get_cycle_intensity(self.current_cycle)
+        cycle_start_intensity = self.current_cycle_intensity
 
-        command = f"TEST:START:{motor_string}:{self.current_cycle_intensity}:{duration_ms}"
+        self.ramp_segments = self.build_cycle_segments(selected_motors, cycle_start_intensity, self.ramp_end_intensity, duration_ms)
+        self.ramp_segment_index = 0
+        self.current_ramp_segment = 1
+        self.ramp_active = len(self.ramp_segments) > 1
 
         label = self.current_trial_metadata.get("label", "Test")
         self.run_status.config(
@@ -768,12 +978,52 @@ class DualSerialIMUValidationApp:
             fg="lime"
         )
         self.realtime_summary_label.config(
-            text=f"Live summary: cycle {self.current_cycle}/{self.cycle_count} running | intensity {self.current_cycle_intensity}"
+            text=(
+                f"Live summary: cycle {self.current_cycle}/{self.cycle_count} running | "
+                f"ramp={self.ramp_mode} | motor sweep={self.motor_sweep_mode}"
+            )
         )
-        self.append_log(f"[CYCLE] Starting cycle {self.current_cycle}/{self.cycle_count} at intensity {self.current_cycle_intensity}")
+        self.append_log(
+            f"[CYCLE] Starting cycle {self.current_cycle}/{self.cycle_count} | "
+            f"ramp={self.ramp_mode} | motor_sweep={self.motor_sweep_mode} | segments={len(self.ramp_segments)}"
+        )
+
+        return self.send_current_ramp_segment()
+
+    def send_current_ramp_segment(self):
+        if not self.is_test_running or not self.current_trial_metadata:
+            return False
+        if self.ramp_segment_index >= len(self.ramp_segments):
+            return False
+
+        segment = self.ramp_segments[self.ramp_segment_index]
+        motor_string = segment["motor_string"]
+        active_motors = segment["motors"]
+        intensity = segment["intensity"]
+        segment_duration_ms = segment["duration_ms"]
+
+        self.current_cycle_intensity = self.clamp_intensity(intensity)
+        self.current_ramp_segment = self.ramp_segment_index + 1
+        self.set_current_motor_intensities(active_motors, self.current_cycle_intensity)
+
+        command = f"TEST:START:{motor_string}:{self.current_cycle_intensity}:{segment_duration_ms}"
+        self.append_log(
+            f"[SEGMENT] Cycle {self.current_cycle}/{self.cycle_count} | "
+            f"segment {self.current_ramp_segment}/{len(self.ramp_segments)} | "
+            f"motors={motor_string} | intensity={self.current_cycle_intensity} | duration={segment_duration_ms} ms"
+        )
+        self.run_status.config(
+            text=(
+                f"Running: {self.current_trial_metadata.get('label', 'Test')} | "
+                f"Cycle {self.current_cycle}/{self.cycle_count} | "
+                f"Segment {self.current_ramp_segment}/{len(self.ramp_segments)} | "
+                f"{motor_string} @ {self.current_cycle_intensity}"
+            ),
+            fg="lime"
+        )
 
         if not self.send_motor_command(command):
-            self.finish_current_trial(reason="cycle_start_failed")
+            self.finish_current_trial(reason="segment_start_failed")
             return False
         return True
 
@@ -781,6 +1031,20 @@ class DualSerialIMUValidationApp:
         if self.cycle_force_stop:
             self.finish_current_trial(reason=reason)
             return
+
+        # If ramping within a cycle, each ramp segment ends with its own TEST_STOP ACK.
+        # Advance to the next segment first; only complete the cycle after the final segment.
+        if self.is_test_running and self.ramp_segments and self.ramp_segment_index < len(self.ramp_segments) - 1:
+            self.ramp_segment_index += 1
+            self.send_current_ramp_segment()
+            return
+
+        self.ramp_active = False
+        self.ramp_segments = []
+        self.ramp_segment_index = 0
+        self.current_ramp_segment = 0
+        self.current_segment_motors = []
+        self.current_motor_intensities = {i: 0 for i in range(1, self.motor_count + 1)}
 
         if self.is_test_running and self.current_cycle < self.cycle_count:
             self.append_log(f"[CYCLE] Completed cycle {self.current_cycle}/{self.cycle_count}")
@@ -792,6 +1056,12 @@ class DualSerialIMUValidationApp:
 
     def stop_test(self):
         self.cycle_force_stop = True
+        self.ramp_active = False
+        self.ramp_segments = []
+        self.ramp_segment_index = 0
+        self.current_ramp_segment = 0
+        self.current_segment_motors = []
+        self.current_motor_intensities = {i: 0 for i in range(1, self.motor_count + 1)}
         self.send_motor_command("TEST:STOP")
         self.finish_current_trial(reason="stopped_by_user")
         self.run_status.config(text="Stopped", fg="orange")
@@ -880,7 +1150,12 @@ class DualSerialIMUValidationApp:
             label=item["label"],
             auto_next_callback=self.schedule_next_sweep_trial,
             cycle_count=cycle_count,
-            intensity_step=intensity_step
+            intensity_step=intensity_step,
+            ramp_mode=self.ramp_mode_var.get().strip() or "None",
+            ramp_end_intensity=int(self.ramp_end_intensity_var.get().strip() or item["intensity"]),
+            ramp_update_ms=int(self.ramp_update_ms_var.get().strip() or 250),
+            motor_sweep_mode=self.motor_sweep_mode_var.get().strip() or "None",
+            motor_sweep_step_ms=int(self.motor_sweep_step_ms_var.get().strip() or 500)
         )
 
     def schedule_next_sweep_trial(self):
@@ -1076,8 +1351,17 @@ class DualSerialIMUValidationApp:
             "motor_port": self.current_trial_metadata.get("motor_port", self.motor_port_combo.get().strip()),
             "imu_port": self.current_trial_metadata.get("imu_port", self.imu_port_combo.get().strip()),
             "selected_motors": selected_text,
+            "active_segment_motors": ",".join([f"M{i}" for i in self.current_segment_motors]) if self.current_segment_motors else "None",
             "base_intensity": self.current_trial_metadata.get("base_intensity", ""),
             "intensity_step_per_cycle": self.current_trial_metadata.get("intensity_step_per_cycle", ""),
+            "ramp_mode": self.current_trial_metadata.get("ramp_mode", "None"),
+            "ramp_start_intensity": self.current_trial_metadata.get("ramp_start_intensity", ""),
+            "ramp_end_intensity": self.current_trial_metadata.get("ramp_end_intensity", ""),
+            "ramp_update_ms": self.current_trial_metadata.get("ramp_update_ms", ""),
+            "motor_sweep_mode": self.current_trial_metadata.get("motor_sweep_mode", "None"),
+            "motor_sweep_step_ms": self.current_trial_metadata.get("motor_sweep_step_ms", ""),
+            "ramp_segment": self.current_ramp_segment,
+            "ramp_segment_count": len(self.ramp_segments) if self.ramp_segments else 1,
             "intensity": self.current_cycle_intensity,
             "cycle_count": self.cycle_count,
             "current_cycle": self.current_cycle,
@@ -1091,6 +1375,8 @@ class DualSerialIMUValidationApp:
             "raw_accel_magnitude": raw_accel_magnitude,
             "amplitude": amplitude,
         }
+
+        row.update(self.get_motor_intensity_fields())
 
         if imu_timestamp:
             row["imu_timestamp"] = imu_timestamp
@@ -1177,8 +1463,17 @@ class DualSerialIMUValidationApp:
             "motor_port": self.current_trial_metadata.get("motor_port", self.motor_port_combo.get().strip()),
             "imu_port": self.current_trial_metadata.get("imu_port", self.imu_port_combo.get().strip()),
             "selected_motors": selected_text,
+            "active_segment_motors": ",".join([f"M{i}" for i in self.current_segment_motors]) if self.current_segment_motors else "None",
             "base_intensity": self.current_trial_metadata.get("base_intensity", ""),
             "intensity_step_per_cycle": self.current_trial_metadata.get("intensity_step_per_cycle", ""),
+            "ramp_mode": self.current_trial_metadata.get("ramp_mode", "None"),
+            "ramp_start_intensity": self.current_trial_metadata.get("ramp_start_intensity", ""),
+            "ramp_end_intensity": self.current_trial_metadata.get("ramp_end_intensity", ""),
+            "ramp_update_ms": self.current_trial_metadata.get("ramp_update_ms", ""),
+            "motor_sweep_mode": self.current_trial_metadata.get("motor_sweep_mode", "None"),
+            "motor_sweep_step_ms": self.current_trial_metadata.get("motor_sweep_step_ms", ""),
+            "ramp_segment": self.current_ramp_segment,
+            "ramp_segment_count": len(self.ramp_segments) if self.ramp_segments else 1,
             "intensity": self.current_cycle_intensity,
             "cycle_count": self.cycle_count,
             "current_cycle": self.current_cycle,
@@ -1187,6 +1482,8 @@ class DualSerialIMUValidationApp:
 
         # Optional timestamp from the IMU controller.
         # Leave it out if you only want the 45 sensor columns plus trial fields.
+        row.update(self.get_motor_intensity_fields())
+
         if imu_timestamp:
             row["imu_timestamp"] = imu_timestamp
 
@@ -1273,6 +1570,12 @@ class DualSerialIMUValidationApp:
                 "selected_motors": metadata.get("selected_motors", ""),
                 "base_intensity": metadata.get("base_intensity", ""),
                 "intensity_step_per_cycle": metadata.get("intensity_step_per_cycle", ""),
+                "ramp_mode": metadata.get("ramp_mode", "None"),
+                "ramp_start_intensity": metadata.get("ramp_start_intensity", ""),
+                "ramp_end_intensity": metadata.get("ramp_end_intensity", ""),
+                "ramp_update_ms": metadata.get("ramp_update_ms", ""),
+                "motor_sweep_mode": metadata.get("motor_sweep_mode", "None"),
+                "motor_sweep_step_ms": metadata.get("motor_sweep_step_ms", ""),
                 "final_cycle_intensity": self.current_cycle_intensity,
                 "duration_per_cycle_ms": metadata.get("duration_ms", ""),
                 "cycle_count": metadata.get("cycle_count", self.cycle_count),
@@ -1311,6 +1614,12 @@ class DualSerialIMUValidationApp:
         self.is_test_running = False
         self.current_trial_samples = []
         self.current_trial_metadata = {}
+        self.ramp_active = False
+        self.ramp_segments = []
+        self.ramp_segment_index = 0
+        self.current_ramp_segment = 0
+        self.current_segment_motors = []
+        self.current_motor_intensities = {i: 0 for i in range(1, self.motor_count + 1)}
         self.active_trial_id = None
         self.trial_label.config(text="Active Trial: None")
 
@@ -1330,12 +1639,25 @@ class DualSerialIMUValidationApp:
             "motor_port",
             "imu_port",
             "selected_motors",
+            "active_segment_motors",
             "base_intensity",
             "intensity_step_per_cycle",
+            "ramp_mode",
+            "ramp_start_intensity",
+            "ramp_end_intensity",
+            "ramp_update_ms",
+            "motor_sweep_mode",
+            "motor_sweep_step_ms",
+            "ramp_segment",
+            "ramp_segment_count",
             "intensity",
             "cycle_count",
             "current_cycle",
             "sample_number",
+            "m1_intensity",
+            "m2_intensity",
+            "m3_intensity",
+            "m4_intensity",
         ]
 
         optional_fields = []
@@ -1382,8 +1704,15 @@ class DualSerialIMUValidationApp:
             "mode",
             "label",
             "selected_motors",
+            "active_segment_motors",
             "base_intensity",
             "intensity_step_per_cycle",
+            "ramp_mode",
+            "ramp_start_intensity",
+            "ramp_end_intensity",
+            "ramp_update_ms",
+            "motor_sweep_mode",
+            "motor_sweep_step_ms",
             "duration_per_cycle_ms",
             "cycle_count",
             "completed_cycles",
