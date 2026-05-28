@@ -1,1 +1,9 @@
 Saved Logs/
+
+*.spec
+
+build/
+dist/
+
+__pycache__/
+*.pyc
