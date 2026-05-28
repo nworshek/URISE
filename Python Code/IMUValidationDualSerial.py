@@ -636,6 +636,8 @@ class DualSerialIMUValidationApp:
             "duration_ms": duration_ms,
             "cycle_count": self.cycle_count,
             "notes": self.get_notes(),
+            "motor_port": self.motor_port_combo.get().strip(),
+            "imu_port": self.imu_port_combo.get().strip(),
             "auto_next_callback": auto_next_callback,
         }
 
@@ -958,6 +960,8 @@ class DualSerialIMUValidationApp:
             "trial_id": self.active_trial_id or "None",
             "mode": self.current_mode,
             "test_name": self.current_trial_metadata.get("test_name", self.test_name_var.get().strip()),
+            "motor_port": self.current_trial_metadata.get("motor_port", self.motor_port_combo.get().strip()),
+            "imu_port": self.current_trial_metadata.get("imu_port", self.imu_port_combo.get().strip()),
             "selected_motors": selected_text,
             "base_intensity": self.current_trial_metadata.get("base_intensity", ""),
             "intensity_step_per_cycle": self.current_trial_metadata.get("intensity_step_per_cycle", ""),
@@ -1045,6 +1049,8 @@ class DualSerialIMUValidationApp:
             summary = {
                 "trial_id": metadata.get("trial_id", self.active_trial_id),
                 "test_name": self.test_name_var.get().strip() or metadata.get("test_name", ""),
+                "motor_port": metadata.get("motor_port", ""),
+                "imu_port": metadata.get("imu_port", ""),
                 "mode": metadata.get("mode", self.current_mode),
                 "label": metadata.get("label", ""),
                 "selected_motors": metadata.get("selected_motors", ""),
@@ -1104,6 +1110,8 @@ class DualSerialIMUValidationApp:
             "trial_id",
             "mode",
             "test_name",
+            "motor_port",
+            "imu_port",
             "selected_motors",
             "base_intensity",
             "intensity_step_per_cycle",
@@ -1140,6 +1148,8 @@ class DualSerialIMUValidationApp:
                     metadata_fields = [
                         "trial_id",
                         "test_name",
+                        "motor_port",
+                        "imu_port",
                         "mode",
                         "label",
                         "selected_motors",
