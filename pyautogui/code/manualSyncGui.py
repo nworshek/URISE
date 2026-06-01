@@ -1,20 +1,5 @@
 """
 Manual BIOPAC Sync GUI
-
-Purpose:
-- Shows one large SYNC NOW button.
-- When clicked, it can automatically click a fixed BIOPAC screen position.
-- Then it sends a GO command to the Arduino over serial.
-- Designed for a dedicated Windows lab laptop where COM port and BIOPAC coordinates stay consistent.
-
-Required installs:
-    pip install pyserial pyautogui
-
-Before running:
-1. Update SERIAL_PORT to match the Arduino COM port, for example COM3 or COM4.
-2. Use mouse_position_tracker.py to find the BIOPAC record/start button coordinates.
-3. Update BIOPAC_CLICK_X and BIOPAC_CLICK_Y.
-4. Keep BIOPAC in the same window position during testing.
 """
 
 import tkinter as tk
@@ -26,27 +11,18 @@ import pyautogui
 
 # ===================== USER SETTINGS =====================
 
-# Windows Arduino serial port. Change this to the lab laptop's COM port.
-# Examples: "COM3", "COM4", "COM5"
 SERIAL_PORT = "COM4"
 BAUD_RATE = 115200
 
-# Command sent to Arduino firmware.
-SYNC_COMMAND = "GO"
+SYNC_COMMAND = "1"
+STOP_COMMAND = "0"
 
-# BIOPAC button position. Use mouse_position_tracker.py to find these values.
-BIOPAC_CLICK_X = 850
-BIOPAC_CLICK_Y = 420
+BIOPAC_CLICK_X = 82
+BIOPAC_CLICK_Y = 145
 
-# Set to True if you want Python to click BIOPAC before sending GO.
-# Set to False if you only want to send the Arduino trigger.
 ENABLE_BIOPAC_CLICK = True
-
-# Delay after clicking BIOPAC and before sending GO to Arduino.
-# Increase slightly if BIOPAC needs time to begin recording.
 DELAY_AFTER_BIOPAC_CLICK_S = 0.5
 
-# Optional safety: moving mouse to top-left corner aborts pyautogui actions.
 pyautogui.FAILSAFE = True
 
 # =========================================================
@@ -56,7 +32,7 @@ class ManualSyncApp:
     def __init__(self, root):
         self.root = root
         self.root.title("BIOPAC Manual Sync")
-        self.root.geometry("460x300")
+        self.root.geometry("520x300")
         self.root.resizable(False, False)
 
         self.arduino = None
@@ -83,8 +59,11 @@ class ManualSyncApp:
         )
         self.coordinate_label.pack(pady=2)
 
+        button_frame = tk.Frame(root)
+        button_frame.pack(pady=22)
+
         self.sync_button = tk.Button(
-            root,
+            button_frame,
             text="SYNC NOW",
             font=("Arial", 22, "bold"),
             width=16,
@@ -95,11 +74,25 @@ class ManualSyncApp:
             activebackground="#1e5fc0",
             activeforeground="white"
         )
-        self.sync_button.pack(pady=22)
+        self.sync_button.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.stop_button = tk.Button(
+            button_frame,
+            text="STOP",
+            font=("Arial", 12, "bold"),
+            width=7,
+            height=1,
+            command=self.stop_motors,
+            bg="#d9534f",
+            fg="white",
+            activebackground="#b52b27",
+            activeforeground="white"
+        )
+        self.stop_button.pack(side=tk.LEFT)
 
         self.log_label = tk.Label(
             root,
-            text="Last sync: none",
+            text="Last action: none",
             font=("Arial", 10)
         )
         self.log_label.pack(pady=4)
@@ -118,8 +111,11 @@ class ManualSyncApp:
     def connect_serial(self):
         try:
             self.arduino = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-            time.sleep(2)  # Arduino resets when serial opens
-            self.status_label.config(text=f"Serial: Connected to {SERIAL_PORT}", fg="green")
+            time.sleep(2)
+            self.status_label.config(
+                text=f"Serial: Connected to {SERIAL_PORT}",
+                fg="green"
+            )
             print(f"[SYSTEM] Connected to Arduino on {SERIAL_PORT} @ {BAUD_RATE}")
         except Exception as e:
             self.arduino = None
@@ -143,7 +139,7 @@ class ManualSyncApp:
             self.arduino.write((SYNC_COMMAND + "\n").encode())
 
             timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            self.log_label.config(text=f"Last sync: {timestamp}")
+            self.log_label.config(text=f"Last action: SYNC at {timestamp}")
             print(f"[SYNC] Sent {SYNC_COMMAND} at {timestamp}")
 
         except pyautogui.FailSafeException:
@@ -153,6 +149,21 @@ class ManualSyncApp:
             )
         except Exception as e:
             messagebox.showerror("Sync Error", str(e))
+
+    def stop_motors(self):
+        if not self.arduino or not self.arduino.is_open:
+            messagebox.showerror("Error", "Arduino is not connected.")
+            return
+
+        try:
+            self.arduino.write((STOP_COMMAND + "\n").encode())
+
+            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            self.log_label.config(text=f"Last action: STOP at {timestamp}")
+            print(f"[STOP] Sent {STOP_COMMAND} at {timestamp}")
+
+        except Exception as e:
+            messagebox.showerror("Stop Error", str(e))
 
     def on_close(self):
         try:

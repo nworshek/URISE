@@ -1,10 +1,11 @@
 /*
   Simplified BIOPAC Sync Arduino Firmware
 
-  Purpose:
-  - Waits for Python to send "GO"
-  - Sends a TTL pulse from D7 to BIOPAC
-  - Used with the simplified "SYNC NOW" Python GUI
+  Python commands:
+  - "1" = send BIOPAC sync pulse
+  - "0" = stop motors / force output low
+  - "PING" = test connection
+  - "STATUS" = print firmware status
 
   Wiring:
   - Arduino D7  -> BIOPAC trigger/event input
@@ -47,9 +48,15 @@ void loop() {
 void processCommand(String cmd) {
   cmd.trim();
 
-  if (cmd == "GO") {
+  if (cmd == "1") {
     sendPulse(PULSE_MS);
-    Serial.println("ACK:GO");
+    Serial.println("ACK:SYNC");
+    return;
+  }
+
+  if (cmd == "0") {
+    stopMotors();
+    Serial.println("ACK:STOP");
     return;
   }
 
@@ -74,4 +81,16 @@ void sendPulse(unsigned long pulseMs) {
   digitalWrite(BIOPAC_TRIGGER_PIN, HIGH);
   delay(pulseMs);
   digitalWrite(BIOPAC_TRIGGER_PIN, LOW);
+}
+
+void stopMotors() {
+  digitalWrite(BIOPAC_TRIGGER_PIN, LOW);
+
+  /*
+    Add motor shutdown code here if this Arduino also controls motors.
+
+    Example:
+    analogWrite(MOTOR_PWM_PIN, 0);
+    digitalWrite(MOTOR_ENABLE_PIN, LOW);
+  */
 }
