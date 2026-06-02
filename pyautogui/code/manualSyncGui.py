@@ -21,7 +21,6 @@ BIOPAC_CLICK_X = 82
 BIOPAC_CLICK_Y = 145
 
 ENABLE_BIOPAC_CLICK = True
-DELAY_AFTER_BIOPAC_CLICK_S = 0.5
 
 pyautogui.FAILSAFE = True
 
@@ -32,7 +31,17 @@ class ManualSyncApp:
     def __init__(self, root):
         self.root = root
         self.root.title("BIOPAC Manual Sync")
-        self.root.geometry("520x300")
+
+        window_width = 520
+        window_height = 300
+
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+
+        x = screen_width - window_width - 20
+        y = (screen_height - window_height) // 2
+
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         self.root.resizable(False, False)
 
         self.arduino = None
@@ -108,6 +117,19 @@ class ManualSyncApp:
         self.connect_serial()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
+    def move_mouse_to_sync_button(self):
+        self.root.update_idletasks()
+
+        btn_x = self.sync_button.winfo_rootx()
+        btn_y = self.sync_button.winfo_rooty()
+        btn_w = self.sync_button.winfo_width()
+        btn_h = self.sync_button.winfo_height()
+
+        center_x = btn_x + btn_w // 2
+        center_y = btn_y + btn_h // 2
+
+        pyautogui.moveTo(center_x, center_y, duration=0.15)
+
     def connect_serial(self):
         try:
             self.arduino = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
@@ -134,7 +156,9 @@ class ManualSyncApp:
             if ENABLE_BIOPAC_CLICK:
                 print(f"[BIOPAC] Clicking X={BIOPAC_CLICK_X}, Y={BIOPAC_CLICK_Y}")
                 pyautogui.click(BIOPAC_CLICK_X, BIOPAC_CLICK_Y)
-                time.sleep(DELAY_AFTER_BIOPAC_CLICK_S)
+
+                # Return mouse to the SYNC NOW button
+                self.move_mouse_to_sync_button()
 
             self.arduino.write((SYNC_COMMAND + "\n").encode())
 

@@ -27,7 +27,7 @@ void setup() {
 
   inputLine.reserve(40);
 
-  Serial.println("READY:BIOPAC_SYNC");
+  Serial.println("READY:BIOPAC_SYNC"z);
 }
 
 void loop() {
