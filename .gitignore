@@ -7,3 +7,5 @@ dist/
 
 __pycache__/
 *.pyc
+
+glove_clean.png
